@@ -14,7 +14,7 @@ class Point:
     def print_all(self):
         print(f"ID = {self.id} \t | X,Y = {self.xy}")
 
-class Camera:
+class PSCamera:
     def __init__(self, index, proj_paf):
         self.index = index
         self.projection_matrix = self.load_projection(proj_paf)
@@ -32,7 +32,7 @@ class Camera:
         return proj_mat
 
     async def process_footage(self):
-        cap = cv2.VideoCapture(self.index)
+        # cap = cv2.VideoCapture(self.index)
         cap = Camera(self.index, fps=120)
         while True:
             # Capture frame-by-frame
@@ -80,7 +80,7 @@ class DLT:
     def __init__(self, camera1, camera2, host, port):
         self.camera1 = camera1
         self.camera2 = camera2
-        self.sender = SocketSender(host, port)
+        # self.sender = SocketSender(host, port)
 
     def nothing(self, x):
         pass
@@ -89,8 +89,8 @@ class DLT:
         cv2.namedWindow('combined')
         cv2.createTrackbar('thresh value', 'combined', 0, 255, self.nothing)
         while True:
-            c1frame, c1bin = self.camera1.img_queue.get()
-            c2frame, c2bin = self.camera1.img_queue.get()
+            (c1frame, c1bin) = await self.camera1.img_queue.get()
+            (c2frame, c2bin) = await self.camera2.img_queue.get()
 
             combined_overall = self.combine_images(c1frame, c2frame, c1bin, c2bin)
             cv2.imshow('combined', combined_overall)
@@ -104,6 +104,7 @@ class DLT:
             p2 = self.camera2.projection_matrix
             if point1 and point2:
                 point_3d = self.dlt(p1, p2, point1, point2)
+                print(point_3d)
                 # Do something with the 3D position
                 data = struct.pack('fff', point_3d[0], point_3d[1], point_3d[2])
                 self.sender.send(data)
@@ -120,7 +121,7 @@ class DLT:
         combined_overall = np.concatenate((combined_frame, combined_bin), axis=0)
         return combined_overall
 
-    def DLT(self, P1, P2, point1, point2):
+    def dlt(self, P1, P2, point1, point2):
  
         A = [point1[1]*P1[2,:] - P1[1,:],
             P1[0,:] - point1[0]*P1[2,:],
@@ -138,20 +139,29 @@ class DLT:
     def __del__(self):
         self.sender.close()
 
-async def main(host, port):
-    # Set up the cameras
-    camera1 = Camera(0, 'proj_mat_right.yml')
-    camera2 = Camera(1, 'proj_mat_left.yml')
+class Tracker:
+    def __init__(self, c1id, c2id, c1proj, c2proj, host, port):
+        self.c1id = c1id
+        self.c2id = c2id
+        self.c1proj = c1proj
+        self.c2proj = c2proj
+        self.host = host
+        self.port = port
+    
+    async def track(self):
+        # Set up the cameras
+        camera1 = PSCamera(self.c1id, self.c1proj)
+        camera2 = PSCamera(self.c2id, self.c2proj)
 
-    # Set up the processing tasks for both cameras
-    asyncio.create_task(camera1.process_footage())
-    asyncio.create_task(camera2.process_footage())
+        # Set up the processing tasks for both cameras
+        asyncio.create_task(camera1.process_footage())
+        asyncio.create_task(camera2.process_footage())
 
-    # Run the DLT algorithm to get the 3D position
-    dlt = DLT(camera1, camera2, host, port)
-    await dlt.run()
+        # Run the DLT algorithm to get the 3D position
+        dlt = DLT(camera1, camera2, self.host, self.port)
+        await dlt.run()
+
 
 if __name__ == '__main__':
-    host = '127.0.0.1'  # localhost
-    port = 5000
-    asyncio.run(main(host, port))
+    tracker = Tracker(0, 1, 'proj_mat_right.yml', 'proj_mat_left.yml', '127.0.0.1', 5123)
+    asyncio.run(tracker.track())
